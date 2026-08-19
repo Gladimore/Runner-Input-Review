@@ -133,6 +133,14 @@
     border-color:var(--signal-amber);
     transform:scale(1.18);
   }
+  .hud .cell.jump{
+    animation:hudJump .32s cubic-bezier(.34,1.56,.64,1);
+  }
+  @keyframes hudJump{
+    0%   { transform:scale(1.18); }
+    35%  { transform:scale(1.55) translateY(-5px); }
+    100% { transform:scale(1.18); }
+  }
 
   .flash-frame{
     position:absolute;inset:0;
@@ -231,6 +239,12 @@
   }
   tbody tr:hover{background:rgba(255,255,255,0.04);}
   tbody tr.active{background:rgba(255,176,32,0.14);}
+  tbody tr.jump{ animation:rowJump .32s ease; }
+  @keyframes rowJump{
+    0%   { background:rgba(255,176,32,0.14); }
+    35%  { background:rgba(255,176,32,0.34); }
+    100% { background:rgba(255,176,32,0.14); }
+  }
   tbody tr.removing{opacity:0;transform:translateX(12px);}
   td{padding:8px 12px;vertical-align:middle;}
   .idx-col{color:var(--paper-dim);width:44px;}
@@ -502,6 +516,8 @@
     swipes = parseCSV(text);
     lastRemoved = null;
     els.undoBtn.disabled = true;
+    lastActiveIdx = -1;
+    activeRowEl = null;
     renderList();
   }
 
@@ -603,15 +619,29 @@
     return -1;
   }
 
+  let lastActiveIdx = -1;
+
+  function pulse(el, cls){
+    if (!el) return;
+    el.classList.remove(cls);
+    // force reflow so the animation restarts even if re-triggered rapidly
+    void el.offsetWidth;
+    el.classList.add(cls);
+  }
+
   function tick(){
     const t = els.video.currentTime;
     const idx = findActive(t);
+    const isNewEntry = idx !== -1 && idx !== lastActiveIdx;
 
     els.hud.querySelectorAll('.cell').forEach(c => c.classList.remove('hit'));
     if (idx !== -1){
       const dir = swipes[idx].swipe;
       const cell = els.hud.querySelector(`.cell[data-dir="${dir}"]`);
-      if (cell) cell.classList.add('hit');
+      if (cell){
+        cell.classList.add('hit');
+        if (isNewEntry) pulse(cell, 'jump');
+      }
       els.flashFrame.classList.add('on');
     } else {
       els.flashFrame.classList.remove('on');
@@ -622,14 +652,15 @@
       if (row && row !== activeRowEl){
         if (activeRowEl) activeRowEl.classList.remove('active');
         row.classList.add('active');
-        row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         activeRowEl = row;
       }
+      if (row && isNewEntry) pulse(row, 'jump');
     } else if (activeRowEl){
       activeRowEl.classList.remove('active');
       activeRowEl = null;
     }
 
+    lastActiveIdx = idx !== -1 ? idx : lastActiveIdx;
     rafId = requestAnimationFrame(tick);
   }
   rafId = requestAnimationFrame(tick);
