@@ -239,6 +239,7 @@
   }
   tbody tr:hover{background:rgba(255,255,255,0.04);}
   tbody tr.active{background:rgba(255,176,32,0.14);}
+  tbody tr.last-seen{background:rgba(255,176,32,0.05);border-left:2px solid rgba(255,176,32,0.35);}
   tbody tr.jump{ animation:rowJump .32s ease; }
   @keyframes rowJump{
     0%   { background:rgba(255,176,32,0.14); }
@@ -259,6 +260,22 @@
   .dir-up .arrow-badge{color:var(--go-green);border-color:var(--go-green);}
   .dir-down .arrow-badge{color:var(--stop-coral);border-color:var(--stop-coral);}
   .dir-left .arrow-badge,.dir-right .arrow-badge{color:var(--signal-amber);border-color:var(--signal-amber);}
+
+  .dir-cell{display:flex;align-items:center;gap:8px;position:relative;}
+  .edit-dir-btn{
+    background:none;border:1px solid transparent;
+    color:var(--paper-dim);font-size:11px;cursor:pointer;
+    padding:2px 5px;border-radius:4px;line-height:1.5;
+    opacity:0;transition:opacity .12s, border-color .12s, color .12s;
+    white-space:nowrap;font-family:var(--mono);
+  }
+  tbody tr:hover .edit-dir-btn{ opacity:1; }
+  .edit-dir-btn:hover{
+    color:var(--paper);
+    border-color:var(--rail-steel);
+    background:rgba(255,255,255,0.06);
+  }
+
   .rm-col{width:36px;text-align:right;}
   .rm-btn{
     background:none;border:none;color:var(--paper-dim);
@@ -490,6 +507,7 @@
   let fps = 24;
   let lastRemoved = null; // {item, index} for undo
   let activeRowEl = null;
+  let lastSeenRowEl = null;
   let rafId = null;
 
   function parseCSV(text){
@@ -518,6 +536,7 @@
     els.undoBtn.disabled = true;
     lastActiveIdx = -1;
     activeRowEl = null;
+    lastSeenRowEl = null;
     renderList();
   }
 
@@ -528,7 +547,29 @@
     return `${m}:${s}`;
   }
 
+  function buildDirCell(s, i){
+    const td = document.createElement('td');
+    td.className = DIR_CLASS[s.swipe] || '';
+    td.innerHTML = `
+      <div class="dir-cell">
+        <span class="arrow-badge">${DIR_ARROWS[s.swipe] ?? '?'}</span>
+        <span class="dir-name">${DIR_NAMES[s.swipe] ?? 'Unknown'}</span>
+        <button class="edit-dir-btn" data-action="edit-dir" title="Click to cycle direction">✎ edit</button>
+      </div>`;
+    td.querySelector('[data-action="edit-dir"]').addEventListener('click', (e) => {
+      e.stopPropagation();
+      changeDir(i);
+    });
+    return td;
+  }
+
   function renderList(){
+    // remember which index was active/last-seen so we can re-apply after re-render
+    const prevActiveIdx  = activeRowEl  ? parseInt(activeRowEl.dataset.index)  : -1;
+    const prevLastSeenIdx = lastSeenRowEl ? parseInt(lastSeenRowEl.dataset.index) : -1;
+    activeRowEl = null;
+    lastSeenRowEl = null;
+
     els.tableBody.innerHTML = '';
     if (!swipes.length){
       const tr = document.createElement('tr');
@@ -539,30 +580,54 @@
       swipes.forEach((s, i) => {
         const tr = document.createElement('tr');
         tr.dataset.index = i;
-        tr.innerHTML = `
-          <td class="idx-col">${i}</td>
-          <td class="frame-col">${s.frame}</td>
-          <td class="${DIR_CLASS[s.swipe] || ''}">
-            <div class="dir-col">
-              <span class="arrow-badge">${DIR_ARROWS[s.swipe] ?? '?'}</span>
-              <span>${DIR_NAMES[s.swipe] ?? 'Unknown'}</span>
-            </div>
-          </td>
-          <td class="rm-col"><button class="rm-btn" title="Remove entry" data-action="remove">✕</button></td>
-        `;
+
+        const idxTd    = document.createElement('td'); idxTd.className = 'idx-col';   idxTd.textContent = i;
+        const frameTd  = document.createElement('td'); frameTd.className = 'frame-col'; frameTd.textContent = s.frame;
+        const dirTd    = buildDirCell(s, i);
+        const rmTd     = document.createElement('td'); rmTd.className = 'rm-col';
+        rmTd.innerHTML = `<button class="rm-btn" title="Remove entry" data-action="remove">✕</button>`;
+
+        tr.appendChild(idxTd);
+        tr.appendChild(frameTd);
+        tr.appendChild(dirTd);
+        tr.appendChild(rmTd);
+
         tr.addEventListener('click', (e) => {
-          if (e.target.closest('[data-action="remove"]')) return;
+          if (e.target.closest('[data-action="remove"]') || e.target.closest('[data-action="edit-dir"]')) return;
           seekToFrame(s.frame);
         });
-        tr.querySelector('[data-action="remove"]').addEventListener('click', (e) => {
+        rmTd.querySelector('[data-action="remove"]').addEventListener('click', (e) => {
           e.stopPropagation();
           removeAt(i);
         });
+
+        // restore highlight state
+        if (i === prevActiveIdx){
+          tr.classList.add('active');
+          activeRowEl = tr;
+        } else if (i === prevLastSeenIdx && prevActiveIdx === -1){
+          tr.classList.add('last-seen');
+          lastSeenRowEl = tr;
+        }
+
         els.tableBody.appendChild(tr);
       });
     }
     els.listCount.textContent = swipes.length;
     els.statCount.textContent = swipes.length;
+  }
+
+  function changeDir(index){
+    const s = swipes[index];
+    const next = (s.swipe + 1) % 4;
+    swipes[index] = { ...s, swipe: next };
+
+    // patch just the dir cell in-place without a full re-render
+    const row = els.tableBody.querySelector(`tr[data-index="${index}"]`);
+    if (!row) return;
+    const oldTd = row.cells[2];
+    const newTd = buildDirCell(swipes[index], index);
+    row.replaceChild(newTd, oldTd);
   }
 
   function removeAt(index){
@@ -650,13 +715,30 @@
     if (idx !== -1){
       const row = els.tableBody.querySelector(`tr[data-index="${idx}"]`);
       if (row && row !== activeRowEl){
-        if (activeRowEl) activeRowEl.classList.remove('active');
+        // demote previous active to last-seen
+        if (activeRowEl){
+          activeRowEl.classList.remove('active');
+          activeRowEl.classList.add('last-seen');
+          lastSeenRowEl = activeRowEl;
+        }
+        // clear old last-seen if it's a different row
+        if (lastSeenRowEl && lastSeenRowEl !== activeRowEl){
+          lastSeenRowEl.classList.remove('last-seen');
+        }
+        row.classList.remove('last-seen');
         row.classList.add('active');
         activeRowEl = row;
+        lastSeenRowEl = null;
       }
       if (row && isNewEntry) pulse(row, 'jump');
     } else if (activeRowEl){
+      // video left the window — demote to last-seen, don't erase
       activeRowEl.classList.remove('active');
+      activeRowEl.classList.add('last-seen');
+      if (lastSeenRowEl && lastSeenRowEl !== activeRowEl){
+        lastSeenRowEl.classList.remove('last-seen');
+      }
+      lastSeenRowEl = activeRowEl;
       activeRowEl = null;
     }
 
